@@ -11,6 +11,8 @@ class ROBOD(Dataset):
     def __init__(self, data_path: str, rooms: List[str], n_past: int, train_days: int = None, is_test: bool = False,
                  is_val: bool = False, val_days: int = None):
         super().__init__()
+        self.is_test = is_test
+        self.is_val = is_val
         self.data_path = data_path
         self.n_past = n_past
         self.source_rooms = rooms
@@ -43,7 +45,7 @@ class ROBOD(Dataset):
             timestamp_train_end = timestamp_start + datetime.timedelta(days=train_days)
             timestamp_val_end = timestamp_train_end+datetime.timedelta(days=val_days)
             source_df = self.source_df.loc[(self.source_df['timestamp'] >= timestamp_train_end) & (self.source_df['timestamp'] < timestamp_val_end), :]
-            train_tail = self.source_df.loc[self.source_df['timestamp'] >= timestamp_train_end, :].tail(n_past)
+            train_tail = self.source_df.loc[self.source_df['timestamp'] < timestamp_train_end, :].tail(n_past)
             self.source_df = pd.concat([train_tail, source_df])
 
         #Transfer training with validation set - test set
@@ -54,19 +56,32 @@ class ROBOD(Dataset):
             val_tail = self.source_df.loc[self.source_df['timestamp'] < timestamp_val_end, :].tail(n_past)
             self.source_df = pd.concat([val_tail, source_df])
 
-
-        self.num_samples_per_room = []
-        for room in self.source_rooms:
-            self.num_samples_per_room.append(len(self.source_df[self.source_df['Room'] == room]) - n_past)
-        self.room_indices = np.cumsum(self.num_samples_per_room)
         self.room_df = []
-        for room in self.source_rooms:
-            self.room_df.append(self.source_df.loc[self.source_df['Room'] == room, :])
+        self.negative_idx = np.array([])
+        self.num_samples_per_room = []
+        for i, room in enumerate(self.source_rooms):
+            room_df = self.source_df.loc[self.source_df['Room'] == room, :]
+            self.num_samples_per_room.append(len(room_df) - n_past)
+            self.room_df.append(room_df)
+            truncated_df = room_df.iloc[n_past:, :]
+            indices = np.where(truncated_df['occupant_presence [binary]'] == 0)[0]
+            if i != 0:
+                indices = indices + self.num_samples_per_room[i-1]
+            self.negative_idx = np.append(self.negative_idx, indices)
+        self.room_indices = np.cumsum(self.num_samples_per_room)
+
+        num_positive_indices = len(self.source_df) - len(self.source_rooms)*self.n_past - len(self.negative_idx)
+        self.num_upsamples = num_positive_indices - len(self.negative_idx)
 
     def __len__(self):
-        return len(self.source_df) - len(self.source_rooms)*self.n_past
+        if not self.is_val and not self.is_test and self.num_upsamples > 0:
+            return len(self.source_df) - len(self.source_rooms)*self.n_past + self.num_upsamples
+        else:
+            return len(self.source_df) - len(self.source_rooms)*self.n_past
 
     def __getitem__(self, idx):
+        if idx >= len(self.source_df) - len(self.source_rooms)*self.n_past:
+            idx = int(np.random.choice(self.negative_idx, 1)[0])
         room_index = np.searchsorted(self.room_indices, idx, side='right')
         new_room_indices = np.insert(self.room_indices, 0, 0)
         item_df = self.room_df[room_index].iloc[idx-new_room_indices[room_index]:idx-new_room_indices[room_index]+self.n_past+1]
@@ -82,6 +97,8 @@ class ECO(Dataset):
     def __init__(self, data_path: str, residencies: List[str], n_past: int, train_days: int = None, is_test: bool = False,
                  is_val: bool = False, val_days: int = None):
         super().__init__()
+        self.is_val = is_val
+        self.is_test = is_test
         self.data_path = data_path
         self.n_past = n_past
         self.source_residencies = residencies
@@ -116,7 +133,7 @@ class ECO(Dataset):
             timestamp_train_end = timestamp_start + datetime.timedelta(days=train_days)
             timestamp_val_end = timestamp_train_end+datetime.timedelta(days=val_days)
             source_df = self.source_df.loc[(self.source_df['Timestamp'] >= timestamp_train_end) & (self.source_df['Timestamp'] < timestamp_val_end), :]
-            train_tail = self.source_df.loc[self.source_df['Timestamp'] >= timestamp_train_end, :].tail(n_past)
+            train_tail = self.source_df.loc[self.source_df['Timestamp'] < timestamp_train_end, :].tail(n_past)
             self.source_df = pd.concat([train_tail, source_df])
 
         # Transfer training with validation set - test set
@@ -127,19 +144,32 @@ class ECO(Dataset):
             val_tail = self.source_df.loc[self.source_df['Timestamp'] < timestamp_val_end, :].tail(n_past)
             self.source_df = pd.concat([val_tail, source_df])
 
-
-        self.num_samples_per_room = []
-        for residency in self.source_residencies:
-            self.num_samples_per_room.append(len(self.source_df[self.source_df['Residency'] == residency]) - n_past)
-        self.residency_indices = np.cumsum(self.num_samples_per_room)
         self.residencies_df = []
-        for residency in self.source_residencies:
-            self.residencies_df.append(self.source_df.loc[self.source_df['Residency'] == residency, :])
+        self.negative_idx = np.array([])
+        self.num_samples_per_room = []
+        for i, residency in enumerate(self.source_residencies):
+            residency_df = self.source_df.loc[self.source_df['Residency'] == residency, :]
+            self.num_samples_per_room.append(len(residency_df) - n_past)
+            self.residencies_df.append(residency_df)
+            truncated_df = residency_df.iloc[n_past:, :]
+            indices = np.where(truncated_df['occupant_presence [binary]'] == 0)[0]
+            if i != 0:
+                indices = indices + self.num_samples_per_room[i - 1]
+            self.negative_idx = np.append(self.negative_idx, indices)
+        self.residency_indices = np.cumsum(self.num_samples_per_room)
+
+        num_positive_indices = len(self.source_df) - len(self.source_residencies) * self.n_past - len(self.negative_idx)
+        self.num_upsamples = num_positive_indices - len(self.negative_idx)
 
     def __len__(self):
-        return len(self.source_df) - len(self.source_residencies) * self.n_past
+        if not self.is_val and not self.is_test and self.num_upsamples > 0:
+            return len(self.source_df) - len(self.source_residencies) * self.n_past + self.num_upsamples
+        else:
+            return len(self.source_df) - len(self.source_residencies) * self.n_past
 
     def __getitem__(self, idx):
+        if idx > len(self.source_df) - len(self.source_residencies)*self.n_past:
+            idx = int(np.random.choice(self.negative_idx, 1)[0])
         residency_index = np.searchsorted(self.residency_indices, idx, side='right')
         new_room_indices = np.insert(self.residency_indices, 0, 0)
         item_df = self.residencies_df[residency_index].iloc[
@@ -153,7 +183,8 @@ class HPDMobile(Dataset):
     def __init__(self, data_path: str, households: List[str], n_past: int, train_days: int = None, is_test: bool = False,
                  is_val: bool = False, val_days: int = None, num_mels: int = 64, spec_second_dim: int = 10):
         super().__init__()
-        super().__init__()
+        self.is_val = is_val
+        self.is_test = is_test
         self.data_path = data_path
         self.n_past = n_past
         self.source_households = households
@@ -163,78 +194,91 @@ class HPDMobile(Dataset):
         self.num_mels = num_mels
         self.spec_second_dim = spec_second_dim
 
-        ## Source training with validation set - train set
-        if not train_days and val_days and not is_val:
-            timestamp_end = self.source_df.iloc[-1, :]['Timestamp']
-            timestamp_val_start = timestamp_end - datetime.timedelta(days=val_days)
-            self.source_df = self.source_df.loc[self.source_df['Timestamp'] < timestamp_val_start, :]
-
-        ## Source training with validation set - validation set
-        if not train_days and val_days and is_val:
-            timestamp_end = self.source_df.iloc[-1, :]['Timestamp']
-            timestamp_val_start = timestamp_end - datetime.timedelta(days=val_days)
-            source_df = self.source_df.loc[self.source_df['Timestamp'] >= timestamp_val_start, :]
-            rest = self.source_df.loc[self.source_df['Timestamp'] < timestamp_val_start, :]
-            self.source_df = pd.concat([rest.tail(n_past), source_df])
-
-        ## Transfer training with validation set - train set
-        if train_days and not is_test and not is_val and not val_days:
-            timestamp_start = self.source_df.iloc[0, :]['Timestamp']
-            timestamp_end = timestamp_start + datetime.timedelta(days=train_days)
-            self.source_df = self.source_df.loc[self.source_df['Timestamp'] < timestamp_end, :]
-
-        ## Transfer training with validation set - validation set
-        if train_days and not is_test and is_val and val_days:
-            timestamp_start = self.source_df.iloc[0, :]['Timestamp']
-            timestamp_train_end = timestamp_start + datetime.timedelta(days=train_days)
-            timestamp_val_end = timestamp_train_end + datetime.timedelta(days=val_days)
-            source_df = self.source_df.loc[(self.source_df['Timestamp'] >= timestamp_train_end) & (
-                        self.source_df['Timestamp'] < timestamp_val_end), :]
-            train_tail = self.source_df.loc[self.source_df['Timestamp'] >= timestamp_train_end, :].tail(n_past)
-            self.source_df = pd.concat([train_tail, source_df])
-
-        # Transfer training with validation set - test set
-        if train_days and is_test and val_days:
-            timestamp_start = self.source_df.iloc[0, :]['Timestamp']
-            timestamp_val_end = timestamp_start + datetime.timedelta(days=train_days + val_days)
-            source_df = self.source_df.loc[self.source_df['Timestamp'] >= timestamp_val_end, :]
-            val_tail = self.source_df.loc[self.source_df['Timestamp'] < timestamp_val_end, :].tail(n_past)
-            self.source_df = pd.concat([val_tail, source_df])
-
         self.residencies_df = []
-        for household in self.source_households:
-            self.residencies_df.append(
-                self.transform_household_df(self.source_df.loc[self.source_df['Household'] == household, :]))
+        self.negative_idx = np.array([])
         self.num_samples_per_room = []
-        for residency in self.residencies_df:
-            self.num_samples_per_room.append(int((len(residency)/5)-n_past))
+        for i, household in enumerate(self.source_households):
+            residency_df = self.source_df.loc[self.source_df['Household'] == household, :]
+            max_days = residency_df['DaysSinceStart'].max()
+            if not train_days and val_days and not is_val:
+                if isinstance(val_days, float):
+                    train_days = int(max_days-val_days*max_days)
+                else:
+                    train_days = max_days-val_days
+                residency_df = residency_df.loc[residency_df['DaysSinceStart'] < train_days]
+            if not train_days and val_days and is_val:
+                if isinstance(val_days, float):
+                    train_days = int(max_days-val_days*max_days)
+                else:
+                    train_days = max_days-val_days
+                first_part = residency_df.loc[self.source_df['DaysSinceStart'] >= train_days, :]
+                second_part = residency_df.loc[self.source_df['DaysSinceStart'] < train_days, :]
+                residency_df = pd.concat([second_part.tail(n_past), first_part])
+            if train_days and not is_test and not is_val and not val_days:
+                if isinstance(train_days, float):
+                    train_days = int(train_days*max_days)
+                residency_df = residency_df.loc[residency_df['DaysSinceStart'] < train_days, :]
+            if train_days and not is_test and is_val and val_days:
+                if isinstance(train_days, float):
+                    train_days = int(train_days*max_days)
+                if isinstance(val_days, float):
+                    val_days = int(val_days*max_days)
+                first_part = residency_df.loc[(self.source_df['DaysSinceStart'] >= train_days) & (
+                        self.source_df['DaysSinceStart'] < train_days+val_days), :]
+                second_part = residency_df.loc[self.source_df['DaysSinceStart'] < train_days, :].tail(n_past)
+                residency_df = pd.concat([second_part.tail(n_past), first_part])
+            if train_days and is_test and val_days:
+                if isinstance(train_days, float):
+                    train_days = int(train_days*max_days)
+                if isinstance(val_days, float):
+                    val_days = int(val_days*max_days)
+                first_part = residency_df.loc[self.source_df['DaysSinceStart'] >= train_days+val_days, :]
+                second_part = residency_df.loc[self.source_df['DaysSinceStart'] < train_days+val_days, :].tail(n_past)
+                residency_df = pd.concat([second_part.tail(n_past), first_part])
+
+            self.num_samples_per_room.append(int((len(residency_df)/5)-n_past))
+            self.residencies_df.append(self.transform_household_df(residency_df))
+            truncated_df = self.residencies_df[i].iloc[n_past*5:, :]
+            indices = np.where(truncated_df['occupied'] == 0)[0][::5] / 5
+            if i != 0:
+                indices = indices + self.num_samples_per_room[i - 1]
+            self.negative_idx = np.append(self.negative_idx, indices)
         self.residency_indices = np.cumsum(self.num_samples_per_room)
 
+        num_positive_indices = self.residency_indices[-1] - len(self.source_households) * self.n_past - len(self.negative_idx)
+        self.num_upsamples = num_positive_indices - len(self.negative_idx)
+
     def __len__(self):
-        return self.residency_indices[-1]
+        return self.residency_indices[-1] + self.num_upsamples
 
     def get_audio_array(self, date_time, residency, residency_shortened):
         path_to_base_folder, _ = os.path.split(self.data_path)
         path_to_residency_audio = os.path.join(path_to_base_folder, residency, f'{residency_shortened}_AUDIO')
         folder_names = os.listdir(path_to_residency_audio)
-        date_folder_name = f'{date_time.year}-{date_time.month}-{date_time.day}'
+        date_folder_name = f'{date_time.year}-{date_time.month:02d}-{date_time.day}'
         hour_folder_name = f'{date_time.hour:02d}{date_time.minute:02d}'
         audio_array = np.zeros(shape=(5, self.num_mels, self.spec_second_dim))
         for folder in folder_names:
             room_number = int(folder.split('_')[1][2])
-            path_to_audio_file = os.path.join(path_to_residency_audio, folder, date_folder_name, hour_folder_name)
-            audio_file_name = [file for file in os.listdir(path_to_audio_file) if file[-4:] == '.npy'][0]
-            with open(os.path.join(path_to_audio_file, audio_file_name), 'rb') as f:
-                audio = np.load(file=f)
+            try:
+                path_to_audio_file = os.path.join(path_to_residency_audio, folder, date_folder_name, hour_folder_name)
+                audio_file_name = [file for file in os.listdir(path_to_audio_file) if file[-4:] == '.npy'][0]
+                with open(os.path.join(path_to_audio_file, audio_file_name), 'rb') as f:
+                    audio = np.load(file=f)
+                    audio_array[room_number-1] = audio
+            except FileNotFoundError:
+                audio = np.zeros(shape=(self.num_mels, self.spec_second_dim))
                 audio_array[room_number-1] = audio
 
         return audio_array
 
     def __getitem__(self, idx):
+        if idx > self.residency_indices[-1]:
+            idx = int(np.random.choice(self.negative_idx, 1)[0])
         residency_index = np.searchsorted(self.residency_indices, idx, side='right')
         new_room_indices = np.insert(self.residency_indices, 0, 0)
         item_df = self.residencies_df[residency_index].iloc[
-            (idx - new_room_indices[residency_index])*5:(idx - new_room_indices[residency_index])*5 + 5*self.n_past + 5]
+            (idx - new_room_indices[residency_index])*5:(idx - new_room_indices[residency_index])*5 + 5*self.n_past + 5].copy()
         y_labels = item_df.tail(5)['occupied'].unique()
         if 1 in y_labels:
             y_label = 1
@@ -245,7 +289,7 @@ class HPDMobile(Dataset):
         env_array = torch.transpose(env_array.reshape(int(env_array.shape[0]/5), 5, env_array.shape[1]), 0, 1)
         row_for_prediction = item_df.iloc[-1, :]
         audio_array = self.get_audio_array(row_for_prediction['Timestamp'], f'Household 0{residency_index+1}', f'H{residency_index+1}')
-        return (env_array, torch.from_numpy(audio_array)), y_label
+        return (env_array, torch.from_numpy(audio_array).type(torch.FloatTensor)), y_label
 
     def transform_household_df(self, df):
         timestamps = df['Timestamp'].unique()
@@ -256,10 +300,17 @@ class HPDMobile(Dataset):
         result = result.reset_index()
         result = result.fillna(0)
         result = result.rename(columns={'level_0': 'Timestamp', 'level_1': 'hub'})
+        for i in range(int(len(result)/5)):
+            small_df = result.iloc[5*i:5*i+5, :]
+            y_labels = small_df['occupied'].unique()
+            if 1 in y_labels:
+                result.iloc[5*i:5*i+5, 5] = 1
+            else:
+                result.iloc[5*i:5*i+5, 5] = 0
         return result
 
 
 if __name__ == '__main__':
     dataset = HPDMobile(data_path='../../data/HPDMobile/combined.csv', households=['Household 01', 'Household 02', 'Household 03'], n_past=9, val_days=7)
-    item = dataset.__getitem__(0)
-    print(item[0][0].shape)
+    item = dataset.__getitem__(130000)
+    print(item[0][1].shape)

@@ -29,7 +29,10 @@ def train(model, loader, optimizer):
         for i, data in enumerate(loader):
             # Step 1. Remember that Pytorch accumulates gradients.
             # We need to clear them out before each instance
-            x, label = data[0].to(device), data[1].to(device)
+            if isinstance(data[0], list):
+                x, label = (data[0][0].to(device), data[0][1].to(device)), data[1].to(device)
+            else:
+                x, label = data[0].to(device), data[1].to(device)
 
             model.zero_grad()
 
@@ -45,7 +48,10 @@ def train(model, loader, optimizer):
             prog_bar.set_postfix(**{'run:': 'LSTM', 'lr': 0.0001,
                                     'loss': loss.item()
                                     })
-            prog_bar.update(x.size(0))
+            if isinstance(x, tuple):
+                prog_bar.update(x[0].size(0))
+            else:
+                prog_bar.update(x.size(0))
 
     return model
 
