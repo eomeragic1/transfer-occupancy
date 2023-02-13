@@ -138,7 +138,7 @@ class LSTMWithAudio(nn.Module):
         self.conv1_env = ResNetBlock(seq_length, seq_length, kernel_size=(3, 5))
 
         self.pool_audio = nn.MaxPool2d(3, stride=2, padding=1)
-        self.lstm = nn.LSTM(input_size=45, hidden_size=hidden_size, num_layers=num_layers, batch_first=True,
+        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True,
                             bidirectional=bidirectional)
 
         w_out1 = math.floor((64 - 5 + 2) / 2 + 1)
@@ -292,6 +292,50 @@ class ConvNetWithAudio(nn.Module):
         x = self.relu(x)
         x = self.fc2(x)
         return torch.sigmoid(x)
+
+
+class ROBODNaiveClassifier(nn.Module):
+    def __init__(self):
+        self.num_classes = 1
+        super(ROBODNaiveClassifier, self).__init__()
+
+    def forward(self, x):
+        sin = x[:, -1, -7].unsqueeze(1)  # Timestamp sin and cos
+        cos = x[:, -1, -6].unsqueeze(1)
+        acos = torch.acos(cos) * 360 / (2 * 3.14159)
+        angle = torch.randn(sin.size(), device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'))
+        angle[sin < 0] = -acos[sin < 0] % 360
+        angle[sin >= 0] = acos[sin >= 0]
+        hours = angle * 24 / 360
+        condition = ((hours >= 9) & (hours <= 17))
+        angle[condition] = 1
+        angle[~condition] = 0
+        return angle
+
+class ECONaiveClassifier(nn.Module):
+    def __init__(self):
+        super(ECONaiveClassifier, self).__init__()
+        self.num_classes = 1
+
+    def forward(self, x):
+        hours = x[:, -1, -16:-6].sum(axis=1).unsqueeze(1)
+        mask = hours > 0
+        output = torch.zeros(hours.size(), device='cuda')
+        output[mask] = 1
+        return output
+
+class HPDMobileNaiveClassifier(nn.Module):
+    def __init__(self):
+        super(HPDMobileNaiveClassifier, self).__init__()
+        self.num_classes = 1
+
+    def forward(self, x):
+        env = x[0].to(torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'))
+        hours = env[:, -1, -1, -16:-6].sum(axis=1).unsqueeze(1)
+        mask = hours > 0
+        output = torch.ones(hours.size(), device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'))
+        output[mask] = 0
+        return output
 
 
 if __name__ == '__main__':
