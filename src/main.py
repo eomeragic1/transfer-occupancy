@@ -2,7 +2,7 @@ import argparse
 import datetime
 import os
 from pathlib import Path
-
+import matplotlib.dates as mdates
 import pandas as pd
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
@@ -31,24 +31,24 @@ def str2bool(v):
 if __name__ == '__main__':
     # ECO: 190 train days, 15 val days, 31 is ok for n_past
     # ROBOD: 90 train days, 10 val days, 10 for n_past
-    # HPDMobile:
+    # HPDMobile: 15 n_past
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str, default="../../data/")
-    parser.add_argument('--dataset', type=str, default="HPDMobile")
-    parser.add_argument('--model', type=str, default="LSTM")
-    parser.add_argument('--buildings', nargs='+', default=["Household 01", "Household 03", "Household 06"])
-    parser.add_argument('--epoch', type=int, default=30)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--dataset', type=str, default="ECO")
+    parser.add_argument('--model', type=str, default="Naive")
+    parser.add_argument('--buildings', nargs='+', default=["Residency 04"])
+    parser.add_argument('--epoch', type=int, default=0)
+    parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.05)
     parser.add_argument('--n_past', type=int, default=15)
-    parser.add_argument('--train_days', type=int, default=12)
+    parser.add_argument('--train_days', type=int, default=-1)
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--val_days', type=float, default=5)
+    parser.add_argument('--val_days', type=int, default=5)
     parser.add_argument('--hidden_size', type=int, default=32)
-    parser.add_argument('--transfer', type=str2bool, default=True)
+    parser.add_argument('--transfer', type=str2bool, default=False)
     parser.add_argument('--transfer_path', type=str, default='../model_checkpoints/HPDMobile_LSTM_2023-01-31_seed_888888_traindays_None_9189.pt')
     parser.add_argument('--save_model', type=str2bool, default=False)
-    parser.add_argument('--visualize', type=str2bool, default=True)
+    parser.add_argument('--visualize', type=str2bool, default=False)
     parser.add_argument('--num_frozen_layers', type=int, default=0)
 
     args = parser.parse_args()
@@ -85,13 +85,13 @@ if __name__ == '__main__':
         input_size = 27
     elif dataset_name == "ECO":
         source_dataset = ECO(data_path=os.path.join(data_path, dataset_name, 'combined_cleaned.csv'),
-                             residencies=['Residency 01', 'Residency 02', 'Residency 03'], n_past=n_past,
+                             residencies=buildings, n_past=n_past,
                              train_days=train_days, val_days=val_days)
         val_dataset = ECO(data_path=os.path.join(data_path, dataset_name, 'combined_cleaned.csv'),
-                          residencies=['Residency 01', 'Residency 02', 'Residency 03'], n_past=n_past,
+                          residencies=buildings, n_past=n_past,
                           train_days=train_days, val_days=val_days, is_val=True)
         test_dataset = ECO(data_path=os.path.join(data_path, dataset_name, 'combined_cleaned.csv'),
-                           residencies=['Residency 01', 'Residency 02', 'Residency 03'], n_past=n_past,
+                           residencies=buildings, n_past=n_past,
                            train_days=train_days, val_days=val_days, is_test=True)
         input_size = 38
     elif dataset_name == 'HPDMobile':
@@ -136,9 +136,20 @@ if __name__ == '__main__':
 
     manual_seed(seed)
     random.seed(seed)
-    train_loader = DataLoader(source_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    if len(source_dataset):
+        train_loader = DataLoader(source_dataset, batch_size=batch_size, shuffle=True)
+    else:
+        train_loader = []
+    if len(val_dataset):
+        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    else:
+        val_loader = []
+    if len(test_dataset):
+        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    else:
+        test_loader = []
+
+    print('Debug: Length of test loader: ', len(test_loader))
     if model != 'Naive':
         optimizer = SGD(filter(lambda p: p.requires_grad, net.parameters()), lr=lr, weight_decay=5e-4)
         scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=2)
@@ -250,17 +261,22 @@ if __name__ == '__main__':
                 bbox_inches='tight')
             plt.show()
 
-    checkpoint = load(model_save_paths[-1])
-    net.load_state_dict(checkpoint['model_state_dict'])
+#    checkpoint = load(model_save_paths[-1])
+#    net.load_state_dict(checkpoint['model_state_dict'])
     net.eval()
     test_f1, test_loss, test_acc, pred_series_test = test(net, test_loader, visualize=visualize)
 
     if visualize:
         pred_series_test.index = pd.to_datetime(pred_series_test.index, unit='ns')
-        grouped_test = pred_series_test.groupby(pd.Grouper(freq='D')).agg(np.mean)
+        grouped_test = pred_series_test.groupby(pd.Grouper(freq='D')).agg(np.mean).sort_index().dropna()
+        x = mdates.date2num(grouped_test.index)
+        z = np.polyfit(x, grouped_test.values, 1)
+        p = np.poly1d(z)
         fig4, ax4 = plt.subplots()
-        ax4.plot(grouped_test, 'bo-', label='Test set')
+        ax4.plot(grouped_test, 'bo-', label='Test set average prediction accuracy')
+        ax4.plot(grouped_test.index, p(x), 'g-', label='Prediction accuracy trend line')
         ax4.grid(0.4)
+        ax4.legend()
         ax4.set_xlabel('Time')
         ax4.set_ylabel('Accuracy')
         ax4.set_title('Test set prediction accuracy through time')
@@ -273,13 +289,12 @@ if __name__ == '__main__':
             bbox_inches='tight')
         plt.show()
 
+    print(f'Training finished! Best epoch: {best_epoch}, Test f1: {test_f1}, Test loss: {test_loss}, '
+          f'Val f1: {model_val_f1[best_epoch-1] if best_epoch else 0}, Val loss: {min_val_loss}, Test acc: {test_acc}, Val acc: {model_val_acc[best_epoch-1] if best_epoch else 0}, Train loss: {model_train_loss[best_epoch-1] if best_epoch else 0}')
+    with open(f'../results/hpo_{dataset_name}.csv', 'a') as f:
+        f.write(
+            f'{dataset_name},{model},{batch_size},{lr},{n_past},{hidden_size},{seed},{best_epoch},{test_acc:.6f},{test_loss:.4f},{model_val_acc[best_epoch-1] if best_epoch else 0:.6f},{min_val_loss:.4f},{test_f1},{model_val_f1[best_epoch-1] if best_epoch else 0},{model_train_loss[best_epoch-1] if best_epoch else 0},{train_days},{num_frozen_layers},{is_transfer}\n')
     for model_save_path in model_save_paths[:-1]:
         os.remove(model_save_path)
     if not save_model:
         os.remove(model_save_paths[-1])
-    print(f'Training finished! Best epoch: {best_epoch}, Test f1: {test_f1}, Test loss: {test_loss}, '
-          f'Val f1: {model_val_f1[best_epoch-1]}, Val loss: {min_val_loss}, Test acc: {test_acc}, Val acc: {model_val_acc[best_epoch-1]}, Train loss: {model_train_loss[best_epoch-1]}')
-    with open(f'../results/hpo_{dataset_name}.csv', 'a') as f:
-        f.write(
-            f'{dataset_name},{model},{batch_size},{lr},{n_past},{hidden_size},{seed},{best_epoch},{test_acc:.6f},{test_loss:.4f},{model_val_acc[best_epoch-1]:.6f},{min_val_loss:.4f},{test_f1},{model_val_f1[best_epoch-1]},{model_train_loss[best_epoch-1]},{train_days},{num_frozen_layers},{is_transfer}\n')
-

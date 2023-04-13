@@ -23,7 +23,7 @@ from sklearn.ensemble import RandomForestClassifier
 
 if __name__ == '__main__':
     for seed in [1111, 22, 333, 4444, 5555, 66666, 77777, 888888, 999999999]:
-        for train_days in [2, 4, 6, 8, 10]:
+        for train_days in [1, 2, 4, 6, 8, 10]:
             # ECO: 190 train days, 15 val days, 31 is ok for n_past
             # ROBOD: 90 train days, 10 val days, 10 for n_past
 
@@ -34,7 +34,7 @@ if __name__ == '__main__':
             parser.add_argument('--train_days', type=int, default=train_days)
             parser.add_argument('--n_past', type=int, default=10)
             parser.add_argument('--seed', type=int, default=seed)
-            parser.add_argument('--val_days', type=int, default=3)
+            parser.add_argument('--val_days', type=int, default=1)
             parser.add_argument('--hidden_size', type=int, default=32)
             parser.add_argument('--transfer', type=bool, default=False)
             parser.add_argument('--transfer_path', type=str, default='')
@@ -131,4 +131,4 @@ if __name__ == '__main__':
  #           plt.show()
             print(f'Random forest classifier: Test loss: {loss}, Accuracy: {acc}, F1 Score: {f1}')
             with open('../results/results_HPDMobile.csv', 'a') as f:
-                f.write(f'ROBOD,RF,,,,,,,{acc},{loss},,,{f1},,,{train_days},2,RF\n')
+                f.write(f'HPDMobile,RF,,,,,,,{acc},{loss},,,{f1},,,{train_days},2,RF\n')

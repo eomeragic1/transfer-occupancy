@@ -67,6 +67,7 @@ def train(model, loader, optimizer):
 def test(model, loader, visualize=False):
     model.eval()
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print('Debug: Length of the loader: ', len(loader))
     f1 = np.zeros(len(loader))
     acc = np.zeros(len(loader))
     total = 0

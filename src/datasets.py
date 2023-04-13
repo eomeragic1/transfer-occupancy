@@ -35,7 +35,7 @@ class ROBOD(Dataset):
             self.source_df = pd.concat([rest.tail(n_past), source_df])
 
         ## Transfer training with validation set - train set
-        if train_days and not is_test and not is_val and not val_days:
+        if train_days and not is_test and not is_val:
             timestamp_start = self.source_df.iloc[0, :]['timestamp']
             timestamp_end = timestamp_start + datetime.timedelta(days=train_days)
             self.source_df = self.source_df.loc[self.source_df['timestamp'] < timestamp_end, :]
@@ -76,8 +76,9 @@ class ROBOD(Dataset):
     def __len__(self):
         if not self.is_val and not self.is_test and self.num_upsamples > 0:
             return len(self.source_df) - len(self.source_rooms)*self.n_past + self.num_upsamples
-        else:
-            return len(self.source_df) - len(self.source_rooms)*self.n_past
+        elif not len(self.source_df):
+            return 0
+        return len(self.source_df) - len(self.source_rooms)*self.n_past
 
     def __getitem__(self, idx):
         if idx >= len(self.source_df) - len(self.source_rooms)*self.n_past:
@@ -123,7 +124,7 @@ class ECO(Dataset):
             self.source_df = pd.concat([rest.tail(n_past), source_df])
 
         ## Transfer training with validation set - train set
-        if train_days and not is_test and not is_val and not val_days:
+        if train_days and not is_test and not is_val:
             timestamp_start = self.source_df.iloc[0, :]['Timestamp']
             timestamp_end = timestamp_start + datetime.timedelta(days=train_days)
             self.source_df = self.source_df.loc[self.source_df['Timestamp'] < timestamp_end, :]
@@ -157,16 +158,24 @@ class ECO(Dataset):
             if i != 0:
                 indices = indices + np.sum(self.num_samples_per_room[:i])
             self.positive_idx = np.append(self.positive_idx, indices)
-        self.residency_indices = np.cumsum(self.num_samples_per_room)
-        num_negative_indices = len(self.source_df) - len(self.source_residencies) * self.n_past - len(self.positive_idx)
-        self.num_downsamples = len(self.positive_idx) - num_negative_indices
-        self.negative_idx = np.array(list(set(range(len(self.source_df) - len(self.source_residencies) * self.n_past)) - set(self.positive_idx)), dtype=int)
-        if self.num_downsamples > 0 and not is_val and not is_test:
-            self.positive_idx = np.random.choice(self.positive_idx, len(self.positive_idx)-self.num_downsamples, replace=False).astype(int)
+        if len(self.source_df):
+            self.residency_indices = np.cumsum(self.num_samples_per_room)
+            num_negative_indices = len(self.source_df) - len(self.source_residencies) * self.n_past - len(self.positive_idx)
+            self.num_downsamples = len(self.positive_idx) - num_negative_indices
+            self.negative_idx = np.array(list(set(range(len(self.source_df) - len(self.source_residencies) * self.n_past)) - set(self.positive_idx)), dtype=int)
+            if self.num_downsamples > 0 and not is_val and not is_test:
+                self.positive_idx = np.random.choice(self.positive_idx, len(self.positive_idx)-self.num_downsamples, replace=False).astype(int)
+        else:
+            self.residency_indices = [0 for _ in self.num_samples_per_room]
+            self.num_downsamples = 0
+            self.negative_idx = []
+            self.positive_idx = []
 
     def __len__(self):
         if not self.is_val and not self.is_test and self.num_downsamples > 0:
             return len(self.source_df) - len(self.source_residencies) * self.n_past - self.num_downsamples
+        elif not len(self.source_df):
+            return 0
         else:
             return len(self.source_df) - len(self.source_residencies) * self.n_past
 
@@ -260,6 +269,8 @@ class HPDMobile(Dataset):
     def __len__(self):
         if not self.is_val and not self.is_test and self.num_upsamples > 0:
             return self.residency_indices[-1] + self.num_upsamples
+        elif self.residency_indices[-1] < 0:
+            return 0
         else:
             return self.residency_indices[-1]
 
